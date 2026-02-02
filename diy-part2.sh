@@ -1,39 +1,50 @@
 #!/bin/bash
 # =========================================================
-# GL-MT300N-V2 32M Flash 终极适配脚本
+# GL-MT300N-V2 32M Flash + WiFi + I2C 终极适配脚本
 # =========================================================
 
-# 定义文件路径，方便后续引用
 DTS_FILE="target/linux/ramips/dts/mt7628an_glinet_gl-mt300n-v2.dts"
 MK_FILE="target/linux/ramips/image/mt76x8.mk"
 
 # ---------------------------------------------------------
-# 1. 核心适配：修改 DTS 分区表 (16MB -> 32MB)
+# 1. 核心适配：修改 DTS 分区表 (32MB)
 # ---------------------------------------------------------
-# 解释：将 firmware 分区大小从 0xfb0000 改为 0x1fb0000
-echo "Modifying DTS partition size..."
 sed -i 's/<0x50000 0xfb0000>/<0x50000 0x1fb0000>/g' $DTS_FILE
 
 # ---------------------------------------------------------
-# 2. 救命补丁：添加 broken-flash-reset (防止重启死机)
+# 2. 救命补丁：防止重启死机
 # ---------------------------------------------------------
-# 解释：在 spi-max-frequency 下方插入 broken-flash-reset;
-# 如果不加这一行，32MB 闪存重启后会卡死
-echo "Adding broken-flash-reset patch..."
 sed -i '/spi-max-frequency/a \\t\tbroken-flash-reset;' $DTS_FILE
 
 # ---------------------------------------------------------
-# 3. 编译限制：修改 Makefile 允许生成大固件
+# 3. 硬件开启：激活 I2C 总线 (新增!)
 # ---------------------------------------------------------
-# 解释：将编译限制放宽到 32448k (约 31.6MB)，否则编译时会报错说文件太大
-echo "Adjusting Makefile IMAGE_SIZE limit..."
+# 解释：默认 DTS 里 I2C 是关闭的 (disabled)。我们需要在文件末尾追加配置把它打开。
+# 这样驱动才能控制主板左侧的 I2C_SCLK 和 I2C_SD 引脚。
+cat <<EOF >> $DTS_FILE
+
+&i2c {
+	status = "okay";
+};
+EOF
+echo "I2C node enabled in DTS."
+
+# ---------------------------------------------------------
+# 4. 软件驱动：添加 I2C 驱动包到配置文件 (新增!)
+# ---------------------------------------------------------
+# 解释：不需要手动去 make menuconfig 选了，直接在这里强制写入 .config
+echo "CONFIG_PACKAGE_kmod-i2c-mt7628=y" >> .config
+echo "CONFIG_PACKAGE_i2c-tools=y" >> .config
+echo "I2C drivers added to .config."
+
+# ---------------------------------------------------------
+# 5. 编译限制：允许大固件
+# ---------------------------------------------------------
 sed -i '/mt7628an_glinet_gl-mt300n-v2/,/IMAGE_SIZE/s/IMAGE_SIZE := .*/IMAGE_SIZE := 32448k/' $MK_FILE
 
 # ---------------------------------------------------------
-# 4. 个性化：第一次启动默认开启 WiFi (免密)
+# 6. 默认开启 WiFi
 # ---------------------------------------------------------
-# 解释：生成一个一次性脚本，刷机后首次启动自动打开 WiFi
-echo "Enabling WiFi by default..."
 mkdir -p files/etc/uci-defaults
 cat <<EOF > files/etc/uci-defaults/99-enable-wifi
 uci set wireless.@wifi-device[0].disabled='0'
